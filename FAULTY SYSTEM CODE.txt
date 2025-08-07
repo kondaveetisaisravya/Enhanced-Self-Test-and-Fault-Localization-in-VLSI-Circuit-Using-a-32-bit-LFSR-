@@ -1,0 +1,346 @@
+module LFSR_32bit (
+    input wire clk,
+    input wire reset,
+    input wire button, // Button input to change LFSR output
+    output reg [31:0] lfsr_out
+);
+    reg button_prev; // Previous state of the button
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            lfsr_out <= 32'h00000001; // Initialize to 1 on reset
+            button_prev <= 1'b0;
+        end else begin
+            if (button && !button_prev) begin // Detect button press
+                lfsr_out <= {lfsr_out[30:0], lfsr_out[31] ^ lfsr_out[21] ^ lfsr_out[1] ^ lfsr_out[0]};
+            end
+            button_prev <= button; // Update button state
+        end
+    end
+endmodule
+
+module XOR_Tree (
+    input [31:0] data_in,
+    output reg cut_out
+);
+    always @(*) begin
+        if (data_in == 32'h0000001B || data_in > 32'h0000001B)
+            cut_out = ~^data_in; // Inverted XOR from LFSR output = 1B onwards
+        else
+            cut_out = ^data_in;  // Normal XOR operation
+    end
+endmodule
+
+module GoldenCutLUT (
+    input wire [31:0] lfsr_out,
+    output reg golden_cut
+);
+    always @(*) begin
+        case (lfsr_out)
+            32'h00000000: golden_cut = 1'b0;
+            32'h00000001: golden_cut = 1'b1;
+            32'h00000003: golden_cut = 1'b0;
+            32'h00000006: golden_cut = 1'b0;
+            32'h0000000D: golden_cut = 1'b1;
+            32'h0000001B: golden_cut = 1'b0;
+            32'h00000036: golden_cut = 1'b0;
+            32'h0000006D: golden_cut = 1'b1;
+            32'h000000DB: golden_cut = 1'b0;
+            32'h000001B6: golden_cut = 1'b0;
+            32'h0000036D: golden_cut = 1'b1;
+            32'h000006DB: golden_cut = 1'b0;
+            32'h00000DB6: golden_cut = 1'b0;
+            32'h00001B6D: golden_cut = 1'b1;
+            32'h000036DB: golden_cut = 1'b0;
+            32'h00006DB6: golden_cut = 1'b0;
+            32'h0000DB6D: golden_cut = 1'b1;
+            32'h0001B6DB: golden_cut = 1'b0;
+            32'h00036DB6: golden_cut = 1'b0;
+            32'h0006DB6D: golden_cut = 1'b1;
+            32'h000DB6DB: golden_cut = 1'b0;
+            32'h001B6DB6: golden_cut = 1'b0;
+            32'h0036DB6D: golden_cut = 1'b1;
+            32'h006DB6DA: golden_cut = 1'b1;
+            32'h00DB6DB4: golden_cut = 1'b1;
+            default: golden_cut = 1'b0; // Default case for undefined values
+        endcase
+    end
+endmodule
+
+module Comparator (
+    input wire [31:0] lfsr_out,      // Current LFSR output
+    input wire cut_out,              // Output from XOR_Tree
+    input wire golden_cut,           // Expected output from GoldenCutLUT
+    output reg fault              // Output indicating a mismatch
+);
+    always @(*) begin
+        if (cut_out != golden_cut)   // Compare cut_out and golden_cut
+            fault = 1'b1;         // Mismatch detected
+        else
+            fault = 1'b0;         // No mismatch
+    end
+endmodule
+
+module BinToHex (
+    input [15:0] binary,
+    output reg [3:0] hex3, hex2, hex1, hex0
+);
+    always @(*) begin
+        hex0 = binary[3:0];
+        hex1 = binary[7:4];
+        hex2 = binary[11:8];
+        hex3 = binary[15:12];
+    end
+endmodule
+
+module SevenSegDisplay (
+    input clk,
+    input reset,
+    input [3:0] hex3, hex2, hex1, hex0,
+    output reg [6:0] seg,
+    output reg [3:0] an
+);
+    reg [1:0] digit_select;
+    reg [3:0] digit;
+    reg [15:0] clk_div; // Clock divider for 7-segment display
+
+    // Clock divider to generate ~1 kHz clock
+    always @(posedge clk or posedge reset) begin
+        if (reset)
+            clk_div <= 0;
+        else
+            clk_div <= clk_div + 1;
+    end
+
+    // Digit selection logic
+    always @(posedge clk_div[15] or posedge reset) begin
+        if (reset)
+            digit_select <= 0;
+        else
+            digit_select <= digit_select + 1; // Cycle through digits
+    end
+
+    // Multiplexing and segment decoding
+    always @(*) begin
+        case (digit_select)
+            2'b00: begin an = 4'b1110; digit = hex0; end
+            2'b01: begin an = 4'b1101; digit = hex1; end
+            2'b10: begin an = 4'b1011; digit = hex2; end
+            2'b11: begin an = 4'b0111; digit = hex3; end
+        endcase
+
+        case (digit)
+            4'h0: seg = 7'b1000000;
+            4'h1: seg = 7'b1111001;
+            4'h2: seg = 7'b0100100;
+            4'h3: seg = 7'b0110000;
+            4'h4: seg = 7'b0011001;
+            4'h5: seg = 7'b0010010;
+            4'h6: seg = 7'b0000010;
+            4'h7: seg = 7'b1111000;
+            4'h8: seg = 7'b0000000;
+            4'h9: seg = 7'b0010000;
+            4'hA: seg = 7'b0001000;
+            4'hB: seg = 7'b0000011;
+            4'hC: seg = 7'b1000110;
+            4'hD: seg = 7'b0100001;
+            4'hE: seg = 7'b0000110;
+            4'hF: seg = 7'b0001110;
+            default: seg = 7'b1111111;
+        endcase
+    end
+endmodule
+
+module Debounce (
+    input clk,
+    input btn,
+    output reg btn_debounced
+);
+    reg [19:0] debounce_count; // 20-bit counter for debouncing
+
+    always @(posedge clk) begin
+        if (btn != btn_debounced) begin
+            if (debounce_count == 20'hFFFFF) // Wait for stable input
+                btn_debounced <= btn;
+            else
+                debounce_count <= debounce_count + 1;
+        end else
+            debounce_count <= 0;
+    end
+endmodule
+
+module TopModule (
+    input clk,         // 100 MHz Basys 3 clock
+    input reset,       // Reset button
+    input button,      // Push button for LFSR step
+    output [6:0] seg,  // 7-segment display segments
+    output [3:0] an,   // Anode control for 7-segment display
+    output reg led_cut_out,    // LED for cut_out
+    output reg led_golden_cut, // LED for golden_cut
+    output reg led_fault       // LED for fault
+);
+    wire [31:0] lfsr_out;
+    wire [15:0] lsb_word, msb_word;
+    wire [3:0] hex3, hex2, hex1, hex0;
+    wire btn_debounced;
+    wire cut_out, golden_cut, fault;
+    reg display_select; // Toggle between LSB and MSB words
+    reg [25:0] toggle_counter; // Counter for toggling display
+
+    // Debounce the button input
+    Debounce debounce_inst (
+        .clk(clk),
+        .btn(button),
+        .btn_debounced(btn_debounced)
+    );
+
+    // LFSR instance (updates on debounced button press)
+    LFSR_32bit lfsr_inst (
+        .clk(clk),
+        .reset(reset),
+        .button(btn_debounced),
+        .lfsr_out(lfsr_out)
+    );
+
+    // Split 32-bit random number into two 16-bit words
+    assign lsb_word = lfsr_out[15:0];
+    assign msb_word = lfsr_out[31:16];
+
+    // Toggle between LSB and MSB words every 0.5 seconds
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            toggle_counter <= 0;
+            display_select <= 0;
+        end else begin
+            if (toggle_counter == 26'd50_000_000) begin // 0.5 seconds at 100 MHz
+                toggle_counter <= 0;
+                display_select <= ~display_select;
+            end else
+                toggle_counter <= toggle_counter + 1;
+        end
+    end
+
+    // Select which 16-bit word to display
+    wire [15:0] display_word = display_select ? msb_word : lsb_word;
+
+    // Convert Binary to Hexadecimal
+    BinToHex bin_to_hex_inst (
+        .binary(display_word),
+        .hex3(hex3),
+        .hex2(hex2),
+        .hex1(hex1),
+        .hex0(hex0)
+    );
+
+    // 7-segment display driver with proper digit cycling
+    SevenSegDisplay seg_display_inst (
+        .clk(clk),
+        .reset(reset),
+        .hex3(hex3),
+        .hex2(hex2),
+        .hex1(hex1),
+        .hex0(hex0),
+        .seg(seg),
+        .an(an)
+    );
+
+    // XOR Tree instance
+    XOR_Tree xor_tree_inst (
+        .data_in(lfsr_out),
+        .cut_out(cut_out)
+    );
+
+    // Golden Cut LUT instance
+    GoldenCutLUT golden_cut_inst (
+        .lfsr_out(lfsr_out),
+        .golden_cut(golden_cut)
+    );
+
+    // Comparator instance
+    Comparator comp_inst (
+        .lfsr_out(lfsr_out),
+        .cut_out(cut_out),
+        .golden_cut(golden_cut),
+        .fault(fault)
+    );
+
+    // Assign LEDs based on cut_out, golden_cut, and fault
+    always @(*) begin
+        led_cut_out = cut_out;
+        led_golden_cut = golden_cut;
+        led_fault = fault;
+    end
+endmodule
+
+module tb_LFSR_XOR_Tree;
+
+    // Inputs
+    reg clk;
+    reg reset;
+    reg btn;  // Push button input
+
+    // Outputs
+    wire [31:0] lfsr_out;
+    wire cut_out;
+    wire golden_cut;
+    wire fault;
+
+    // Instantiate the Unit Under Test (UUT)
+    LFSR_32bit lfsr_inst (
+        .clk(clk),
+        .reset(reset),
+        .button(btn), // Ensure correct signal name
+        .lfsr_out(lfsr_out)
+    );
+
+    XOR_Tree xor_tree_inst (
+        .data_in(lfsr_out),
+        .cut_out(cut_out)
+    );
+
+    GoldenCutLUT golden_cut_inst (
+        .lfsr_out(lfsr_out),
+        .golden_cut(golden_cut)
+    );
+
+    Comparator comp_inst (
+        .lfsr_out(lfsr_out),
+        .cut_out(cut_out),
+        .golden_cut(golden_cut),
+        .fault(fault)
+    );
+
+    // Clock generation
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk; // 10ns clock period
+    end
+
+    // Test sequence
+    initial begin
+        // Initialize inputs
+        reset = 1; // Apply reset
+        btn = 0;   // Initialize button to 0
+        #20;       // Hold reset for 20ns
+        reset = 0; // Release reset
+        #10;
+        
+        // Simulate button presses for 25 clock cycles
+        repeat (23) begin
+            btn = 1; // Simulate button press
+            #10;
+            btn = 0; // Simulate button release
+            #10;
+        end
+    
+        $stop; // Stop simulation
+    end
+
+    // Monitor to display signals
+    initial begin
+        $monitor("Time: %0t | clk: %b | reset: %b | lfsr_out: %h | cut_out: %b | golden_cut: %b | fault: %b", 
+                 $time, clk, reset, lfsr_out, cut_out, golden_cut, fault);
+    end
+
+endmodule
+

@@ -1,0 +1,52 @@
+`timescale 1ns / 1ps
+
+module LFSR_16bit_tb;
+
+    // Inputs
+    reg clk;
+    reg rst;
+    reg btn;
+
+    // Outputs
+    wire [15:0] random;
+
+    // Instantiate the Unit Under Test (UUT)
+    LFSR_16bit uut (
+        .clk(clk),
+        .rst(rst),
+        .btn(btn),
+        .random(random)
+    );
+
+    // Clock generation
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk; // Toggle clock every 5 time units
+    end
+
+    // Testbench logic
+    initial begin
+        // Initialize inputs
+        rst = 1;
+        btn = 0;
+        #20; // Wait for 20 time units
+
+        // Release reset
+        rst = 0;
+        #10;
+
+        // Simulate button presses to step through LFSR
+        repeat (20) begin
+            btn = 1; // Simulate button press
+            #10;
+            btn = 0; // Release button
+            #10;
+            $display("Random Value: %h", random); // Display the random value
+        end
+
+        // End simulation
+        $stop;
+    end
+
+endmodule
+

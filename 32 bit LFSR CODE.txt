@@ -1,0 +1,334 @@
+
+module LFSR_32bit(
+
+    input clk,
+
+    input rst,
+
+    input btn,         // Push button input for manual step
+
+    output reg [31:0] random
+
+);
+
+    reg btn_last;      // To detect button press edge
+
+
+
+    always @(posedge clk or posedge rst) begin
+
+        if (rst)
+
+            random <= 32'habcd1234; // Seed value
+
+        else if (btn && !btn_last) // Update only on new button press
+
+            random <= {random[30:0], random[31] ^ random[30] ^ random[28] ^ random[19]};
+
+
+
+        btn_last <= btn; // Store last button state
+
+    end
+
+endmodule
+
+
+
+module BinToHex(
+
+    input [15:0] binary,
+
+    output reg [3:0] hex3, hex2, hex1, hex0
+
+);
+
+    always @(*) begin
+
+        hex0 = binary[3:0];
+
+        hex1 = binary[7:4];
+
+        hex2 = binary[11:8];
+
+        hex3 = binary[15:12];
+
+    end
+
+endmodule
+
+
+
+module SevenSegDisplay(
+
+    input clk,
+
+    input rst,
+
+    input [3:0] hex3, hex2, hex1, hex0,
+
+    output reg [6:0] seg,
+
+    output reg [3:0] an
+
+);
+
+    reg [1:0] digit_select;
+
+    reg [3:0] digit;
+
+    reg [15:0] clk_div; // Clock divider for 7-segment display
+
+
+
+    // Clock divider to generate ~1 kHz clock
+
+    always @(posedge clk or posedge rst) begin
+
+        if (rst)
+
+            clk_div <= 0;
+
+        else
+
+            clk_div <= clk_div + 1;
+
+    end
+
+
+
+    // Digit selection logic
+
+    always @(posedge clk_div[15] or posedge rst) begin
+
+        if (rst)
+
+            digit_select <= 0;
+
+        else
+
+            digit_select <= digit_select + 1; // Cycle through digits
+
+    end
+
+
+
+    // Multiplexing and segment decoding
+
+  always @(*) begin
+    if (rst) begin
+        seg = 7'b1111001; // Display "1" when reset is high
+        an = 4'b1110;     // Activate the first digit
+    end else begin
+        case (digit_select)
+            2'b00: begin an = 4'b1110; digit = hex0; end
+            2'b01: begin an = 4'b1101; digit = hex1; end
+            2'b10: begin an = 4'b1011; digit = hex2; end
+            2'b11: begin an = 4'b0111; digit = hex3; end
+        endcase
+
+        case (digit)
+            4'h0: seg = 7'b1000000;
+            4'h1: seg = 7'b1111001;
+            4'h2: seg = 7'b0100100;
+            4'h3: seg = 7'b0110000;
+            4'h4: seg = 7'b0011001;
+            4'h5: seg = 7'b0010010;
+            4'h6: seg = 7'b0000010;
+            4'h7: seg = 7'b1111000;
+            4'h8: seg = 7'b0000000;
+            4'h9: seg = 7'b0010000;
+            4'hA: seg = 7'b0001000;
+            4'hB: seg = 7'b0000011;
+            4'hC: seg = 7'b1000110;
+            4'hD: seg = 7'b0100001;
+            4'hE: seg = 7'b0000110;
+            4'hF: seg = 7'b0001110;
+            default: seg = 7'b1111111;
+        endcase
+    end
+end
+
+endmodule
+
+
+
+module Debounce(
+
+    input clk,
+
+    input btn,
+
+    output reg btn_debounced
+
+);
+
+    reg [19:0] debounce_count; // 20-bit counter for debouncing
+
+
+
+    always @(posedge clk) begin
+
+        if (btn != btn_debounced) begin
+
+            if (debounce_count == 20'hFFFFF) // Wait for stable input
+
+                btn_debounced <= btn;
+
+            else
+
+                debounce_count <= debounce_count + 1;
+
+        end else
+
+            debounce_count <= 0;
+
+    end
+
+endmodule
+
+
+
+module TopModule(
+
+    input clk,         // 100 MHz Basys 3 clock
+
+    input rst,         // Reset button
+
+    input btn,         // Push button for LFSR step
+
+    output [6:0] seg,  // 7-segment display segments
+
+    output [3:0] an    // Anode control for 7-segment display
+
+);
+
+    wire [31:0] random_number;
+
+    wire [15:0] lsb_word, msb_word;
+
+    wire [3:0] hex3, hex2, hex1, hex0;
+
+    wire btn_debounced;
+
+    reg display_select; // Toggle between LSB and MSB words
+
+    reg [25:0] toggle_counter; // Counter for toggling display
+
+
+
+    // Debounce the button input
+
+    Debounce debounce_inst (
+
+        .clk(clk),
+
+        .btn(btn),
+
+        .btn_debounced(btn_debounced)
+
+    );
+
+
+
+    // LFSR instance (updates on debounced button press)
+
+    LFSR_32bit lfsr_inst (
+
+        .clk(clk),
+
+        .rst(rst),
+
+        .btn(btn_debounced),
+
+        .random(random_number)
+
+    );
+
+
+
+    // Split 32-bit random number into two 16-bit words
+
+    assign lsb_word = random_number[15:0];
+
+    assign msb_word = random_number[31:16];
+
+
+
+    // Toggle between LSB and MSB words every 0.5 seconds
+
+    always @(posedge clk or posedge rst) begin
+
+        if (rst) begin
+
+            toggle_counter <= 0;
+
+            display_select <= 0;
+
+        end else begin
+
+            if (toggle_counter == 26'd50_000_000) begin // 0.5 seconds at 100 MHz
+
+                toggle_counter <= 0;
+
+                display_select <= ~display_select;
+
+            end else
+
+                toggle_counter <= toggle_counter + 1;
+
+        end
+
+    end
+
+
+
+    // Select which 16-bit word to display
+
+    wire [15:0] display_word = display_select ? msb_word : lsb_word;
+
+
+
+    // Convert Binary to Hexadecimal
+
+    BinToHex bin_to_hex_inst (
+
+        .binary(display_word),
+
+        .hex3(hex3),
+
+        .hex2(hex2),
+
+        .hex1(hex1),
+
+        .hex0(hex0)
+
+    );
+
+
+
+    // 7-segment display driver with proper digit cycling
+
+    SevenSegDisplay seg_display_inst (
+
+        .clk(clk),
+
+        .rst(rst),
+
+        .hex3(hex3),
+
+        .hex2(hex2),
+
+        .hex1(hex1),
+
+        .hex0(hex0),
+
+        .seg(seg),
+
+        .an(an)
+
+    );
+
+endmodule
+
+

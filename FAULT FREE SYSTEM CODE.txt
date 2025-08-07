@@ -1,0 +1,87 @@
+
+module LFSR_32bit (
+    input wire clk,
+    input wire reset,
+    output reg [31:0] lfsr_out
+);
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            lfsr_out <= 32'h00000000; // Initialize to 0 on reset
+        end else begin
+            if (lfsr_out == 32'h00000000) begin
+                lfsr_out <= 32'h00000001; // Start LFSR with 1 after reset
+            end else begin
+                lfsr_out <= {lfsr_out[30:0], lfsr_out[31] ^ lfsr_out[21] ^ lfsr_out[1] ^ lfsr_out[0]};
+            end
+        end
+    end
+endmodule
+
+module XOR_Tree (
+    input [31:0] data_in,
+    input reset,
+    output reg cut_out
+);
+    always @(*) begin
+        if (reset)
+            cut_out = 1'b0; // Force cut_out to 0 when reset is active
+        else
+            cut_out = ^data_in; // XOR reduction of all bits
+    end
+endmodule
+
+module BIST_Top (
+    input clk,
+    input reset,
+    output [31:0] test_pattern,
+    output test_result
+);
+    wire [31:0] lfsr_out;
+    wire cut_out;
+
+    LFSR_32bit lfsr (
+        .clk(clk),
+        .reset(reset),
+        .lfsr_out(lfsr_out)
+    );
+    
+    XOR_Tree cut (
+        .data_in(lfsr_out),
+        .reset(reset),
+        .cut_out(cut_out)
+    );
+
+    assign test_pattern = lfsr_out;
+    assign test_result = cut_out;
+endmodule
+
+
+`timescale 1ns / 1ps
+
+module BIST_Testbench;
+    reg clk, reset;
+    wire [31:0] test_pattern;
+    wire test_result;
+
+    BIST_Top uut (
+        .clk(clk),
+        .reset(reset),
+        .test_pattern(test_pattern),
+        .test_result(test_result)
+    );
+
+    always #5 clk = ~clk; // 10ns clock period
+
+    initial begin
+        $dumpfile("bist_test.vcd"); 
+        $dumpvars(0, BIST_Testbench);
+        
+        clk = 0;
+        reset = 1;
+        #10 reset = 0;
+
+        repeat (25) @(posedge clk);
+        
+        $finish;
+    end
+endmodule
